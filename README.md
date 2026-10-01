@@ -1,5 +1,8 @@
 # lab17-2569-starter — Zod + React Hook Form
 
+รหัส น.ศ. : 680610676
+ชื่อ-สกุล : ไตรภพ วิเชียรสาร
+
 ```bash
 pnpm install
 pnpm dev

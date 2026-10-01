@@ -1,19 +1,14 @@
-import { Fragment, useState } from "react";
-import { PlusCircle } from "lucide-react";
+import { useMemo, useState } from "react";
+import {
+  Controller,
+  useFieldArray,
+  useForm,
+  type DefaultValues,
+} from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { PlusCircle, RotateCcw, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import {
-  Combobox,
-  ComboboxChip,
-  ComboboxChips,
-  ComboboxChipsInput,
-  ComboboxContent,
-  ComboboxEmpty,
-  ComboboxItem,
-  ComboboxList,
-  ComboboxValue,
-  useComboboxAnchor,
-} from "@/components/ui/combobox";
 import {
   Dialog,
   DialogContent,
@@ -23,118 +18,91 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { Field, FieldError, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  emptyCourseForm,
-  validateCourseField,
-  validateCourseForm,
-  type CourseFormErrors,
-  type CourseFormValues,
-} from "@/lib/course-validation";
 import { useEnrollmentStore } from "@/lib/enrollment-store";
-/**
- *   (Lab 17): เขียนฟอร์มนี้ใหม่ด้วย Zod + React Hook Form
- *   (ดูตัวอย่างใน components/students/add-new-student-dialog.tsx)
- *   - schema ใหม่ที่ src/lib/schemas/course-schema.ts (แทน course-validation.ts)
- *   - ผู้สอนเป็น Array Fields (useFieldArray) — ชื่อ + อีเมล @cmu.ac.th, 1–3 คน
- *   - หลักสูตร (Select), ภาคการศึกษา (Radio Group), รายละเอียด (Textarea 0/100),
- *     รับข่าวสารทางอีเมล (Switch)
- */
+import {
+  createCourseFormSchema,
+  type CourseFormValues,
+} from "@/lib/schemas/course-schema";
+
+import { Label } from "@/components/ui/label";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
+import { FieldContent, FieldDescription } from "@/components/ui/field";
+
+const MAX_INSTRUCTORS = 3;
+const MAX_DESCRIPTION = 100;
+
+const PROGRAMS = [
+  { value: "CPE", label: "CPE — วิศวกรรมคอมพิวเตอร์" },
+  { value: "ISNE", label: "ISNE — วิศวกรรมระบบสารสนเทศและเครือข่าย" },
+] as const;
+
+const SEMESTERS = [
+  { value: "1", label: "ภาคการศึกษาที่ 1" },
+  { value: "2", label: "ภาคการศึกษาที่ 2" },
+  { value: "3", label: "ภาคฤดูร้อน" },
+] as const;
+
+const defaultValues: DefaultValues<CourseFormValues> = {
+  courseId: "",
+  courseTitle: "",
+  instructors: [{ name: "", email: "" }],
+  program: undefined,
+  semester: undefined,
+  description: "",
+  notifyByEmail: false, // ค่าเริ่มต้นปิด
+};
+
 export function AddNewCourseDialog() {
   const addCourse = useEnrollmentStore((s) => s.addCourse);
   const courses = useEnrollmentStore((s) => s.courses);
   const [open, setOpen] = useState(false);
 
-  // state ที่ต้องถือเองสามก้อน (Zod + React Hook Form จะรวมเป็น useForm ตัวเดียว)
-  const [values, setValues] = useState<CourseFormValues>(emptyCourseForm);
-  const [errors, setErrors] = useState<CourseFormErrors>({});
-  const [touched, setTouched] = useState<
-    Partial<Record<keyof CourseFormValues, boolean>>
-  >({});
+  const schema = useMemo(() => createCourseFormSchema(courses), [courses]);
 
-  const [instructorInput, setInstructorInput] = useState("");
-  const instructorsAnchor = useComboboxAnchor();
+  const form = useForm<CourseFormValues>({
+    resolver: zodResolver(schema),
+    mode: "onBlur",
+    defaultValues,
+  });
 
-  const knownInstructors = [...new Set(courses.flatMap((c) => c.instructors))];
-  const typedInstructor = instructorInput.trim();
-  const isNewInstructor =
-    typedInstructor.length > 0 &&
-    !knownInstructors.some(
-      (name) => name.toLowerCase() === typedInstructor.toLowerCase(),
-    ) &&
-    !values.instructors.includes(typedInstructor);
-  const instructorItems = [
-    ...knownInstructors,
-    ...values.instructors.filter((name) => !knownInstructors.includes(name)),
-    ...(isNewInstructor ? [typedInstructor] : []),
-  ];
+  const { fields, append, remove } = useFieldArray({
+    control: form.control,
+    name: "instructors",
+  });
 
-  const checkField = (name: keyof CourseFormValues, next: CourseFormValues) => {
-    setErrors((prev) => ({
-      ...prev,
-      [name]: validateCourseField(name, next, courses),
-    }));
-  };
+  const rootError = form.formState.errors.instructors?.root;
 
-  const handleChange = <K extends keyof CourseFormValues>(
-    name: K,
-    value: CourseFormValues[K],
-  ) => {
-    const next = { ...values, [name]: value };
-    setValues(next);
-    // ช่องที่เคยออกไปแล้ว (touched) เช็กใหม่ทันทีตอนแก้ — error หายเมื่อแก้ถูก
-    if (touched[name]) checkField(name, next);
-  };
+  const descriptionLength = (form.watch("description") ?? "").length;
 
-  // เทียบได้กับ mode: "onBlur" ของ React Hook Form
-  const handleBlur = (name: keyof CourseFormValues) => {
-    setTouched((prev) => ({ ...prev, [name]: true }));
-    checkField(name, values);
-  };
+  const resetForm = () => form.reset(defaultValues);
 
-  const resetForm = () => {
-    setValues(emptyCourseForm);
-    setErrors({});
-    setTouched({});
-    setInstructorInput("");
-  };
-
-  // ด่านตรวจก่อนเข้า store — เทียบได้กับ form.handleSubmit(onSubmit)
-  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const nextErrors = validateCourseForm(values, courses);
-    setErrors(nextErrors);
-    setTouched({ courseId: true, courseTitle: true, instructors: true });
-    if (Object.keys(nextErrors).length > 0) return; // ไม่ผ่าน → ไม่เรียก addCourse
-
+  const onSubmit = (values: CourseFormValues) => {
     addCourse({
-      courseId: values.courseId.trim(),
+      courseId: values.courseId,
       courseTitle: values.courseTitle.trim(),
-      instructors: values.instructors,
+      instructors: values.instructors.map((i) => ({
+        name: i.name.trim(),
+        email: i.email.trim(),
+      })),
+      program: values.program,
+      semester: values.semester,
+      description: values.description.trim() || undefined,
+      notifyByEmail: values.notifyByEmail,
     });
     resetForm();
     setOpen(false);
   };
-
-  // ต้องต่อ id / aria-* / ข้อความ error เองทุกช่อง (<FormItem/FormControl/FormMessage> จะทำแทน)
-  const errorOf = (name: keyof CourseFormValues) =>
-    touched[name] ? errors[name] : undefined;
-
-  const invalidProps = (name: keyof CourseFormValues) => ({
-    "aria-invalid": errorOf(name) ? true : undefined,
-    "aria-describedby": errorOf(name) ? `${name}-error` : undefined,
-  });
-
-  const fieldError = (name: keyof CourseFormValues) => {
-    const message = errorOf(name);
-    return message ? (
-      <p id={`${name}-error`} className="text-sm text-destructive">
-        {message}
-      </p>
-    ) : null;
-  };
-
   return (
     <Dialog
       open={open}
@@ -148,7 +116,11 @@ export function AddNewCourseDialog() {
         เพิ่มวิชา
       </DialogTrigger>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
-        <form onSubmit={handleSubmit} noValidate className="grid gap-4">
+        <form
+          onSubmit={form.handleSubmit(onSubmit)}
+          noValidate
+          className="grid gap-4"
+        >
           <DialogHeader>
             <DialogTitle>เพิ่มวิชาใหม่</DialogTitle>
             <DialogDescription>
@@ -156,85 +128,251 @@ export function AddNewCourseDialog() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="grid gap-1.5">
-            <Label htmlFor="courseId">รหัสวิชา</Label>
-            <Input
-              id="courseId"
-              placeholder="เช่น 261305"
-              inputMode="numeric"
-              value={values.courseId}
-              onChange={(e) => handleChange("courseId", e.target.value)}
-              onBlur={() => handleBlur("courseId")}
-              {...invalidProps("courseId")}
-            />
-            {fieldError("courseId")}
-          </div>
+          <Controller
+            name="courseId"
+            control={form.control}
+            render={({ field, fieldState }) => (
+              <Field data-invalid={fieldState.invalid}>
+                <FieldLabel htmlFor="courseId">รหัสวิชา</FieldLabel>
+                <Input
+                  {...field}
+                  id="courseId"
+                  placeholder="เช่น 261305"
+                  inputMode="numeric"
+                  aria-invalid={fieldState.invalid}
+                />
+                {fieldState.invalid && (
+                  <FieldError errors={[fieldState.error]} />
+                )}
+              </Field>
+            )}
+          />
 
-          <div className="grid gap-1.5">
-            <Label htmlFor="courseTitle">ชื่อวิชา</Label>
-            <Input
-              id="courseTitle"
-              placeholder="เช่น Mobile Application Development"
-              value={values.courseTitle}
-              onChange={(e) => handleChange("courseTitle", e.target.value)}
-              onBlur={() => handleBlur("courseTitle")}
-              {...invalidProps("courseTitle")}
-            />
-            {fieldError("courseTitle")}
-          </div>
+          <Controller
+            name="courseTitle"
+            control={form.control}
+            render={({ field, fieldState }) => (
+              <Field data-invalid={fieldState.invalid}>
+                <FieldLabel htmlFor="courseTitle">ชื่อวิชา</FieldLabel>
+                <Input
+                  {...field}
+                  id="courseTitle"
+                  placeholder="เช่น Mobile Application Development"
+                  aria-invalid={fieldState.invalid}
+                />
+                {fieldState.invalid && (
+                  <FieldError errors={[fieldState.error]} />
+                )}
+              </Field>
+            )}
+          />
 
-          <div className="grid gap-1.5">
-            <Label htmlFor="instructors">ผู้สอน</Label>
-            <Combobox
-              multiple
-              autoHighlight
-              items={instructorItems}
-              value={values.instructors}
-              onValueChange={(v) => {
-                handleChange("instructors", v as string[]);
-                setInstructorInput("");
-              }}
-              inputValue={instructorInput}
-              onInputValueChange={setInstructorInput}
-            >
-              <ComboboxChips ref={instructorsAnchor} className="w-full">
-                <ComboboxValue>
-                  {(selected: string[]) => (
-                    <Fragment>
-                      {selected.map((name) => (
-                        <ComboboxChip key={name}>{name}</ComboboxChip>
-                      ))}
-                      <ComboboxChipsInput
-                        id="instructors"
-                        placeholder={
-                          selected.length === 0
-                            ? "เลือกหรือพิมพ์ชื่อผู้สอน (ได้หลายคน)"
-                            : ""
-                        }
-                        onBlur={() => handleBlur("instructors")}
-                        {...invalidProps("instructors")}
+          {/* ผู้สอน (Array Fields) */}
+          <div className="grid gap-2">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium">ผู้สอน</p>
+                <p className="text-sm text-muted-foreground">
+                  {fields.length}/{MAX_INSTRUCTORS} คน
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={fields.length >= MAX_INSTRUCTORS}
+                onClick={() => append({ name: "", email: "" })}
+              >
+                <PlusCircle className="h-4 w-4" />
+                เพิ่มผู้สอน
+              </Button>
+            </div>
+
+            {fields.map((item, index) => (
+              <div key={item.id} className="flex items-start gap-2">
+                <span className="w-6 pt-2 text-sm text-muted-foreground">
+                  {index + 1}.
+                </span>
+
+                <Controller
+                  name={`instructors.${index}.name`}
+                  control={form.control}
+                  render={({ field, fieldState }) => (
+                    <Field data-invalid={fieldState.invalid} className="flex-1">
+                      <Input
+                        {...field}
+                        placeholder="กรอกชื่อผู้สอน"
+                        aria-label={`ชื่อผู้สอนคนที่ ${index + 1}`}
+                        aria-invalid={fieldState.invalid}
                       />
-                    </Fragment>
+                      {fieldState.invalid && (
+                        <FieldError errors={[fieldState.error]} />
+                      )}
+                    </Field>
                   )}
-                </ComboboxValue>
-              </ComboboxChips>
-              <ComboboxContent anchor={instructorsAnchor}>
-                <ComboboxEmpty>พิมพ์ชื่อเพื่อเพิ่มผู้สอนใหม่</ComboboxEmpty>
-                <ComboboxList>
-                  {(name: string) => (
-                    <ComboboxItem key={name} value={name}>
-                      {name === typedInstructor && isNewInstructor
-                        ? `+ เพิ่มผู้สอน "${name}"`
-                        : name}
-                    </ComboboxItem>
+                />
+
+                <Controller
+                  name={`instructors.${index}.email`}
+                  control={form.control}
+                  render={({ field, fieldState }) => (
+                    <Field data-invalid={fieldState.invalid} className="flex-1">
+                      <Input
+                        {...field}
+                        type="email"
+                        placeholder="ต้องเป็นอีเมล @cmu.ac.th"
+                        aria-label={`อีเมลผู้สอนคนที่ ${index + 1}`}
+                        aria-invalid={fieldState.invalid}
+                      />
+                      {fieldState.invalid && (
+                        <FieldError errors={[fieldState.error]} />
+                      )}
+                    </Field>
                   )}
-                </ComboboxList>
-              </ComboboxContent>
-            </Combobox>
-            {fieldError("instructors")}
+                />
+
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label={`ลบผู้สอนคนที่ ${index + 1}`}
+                  disabled={fields.length <= 1}
+                  onClick={() => remove(index)}
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            ))}
+
+            {rootError && (
+              <p role="alert" className="text-sm text-destructive">
+                {rootError.message}
+              </p>
+            )}
           </div>
+          {/* 3.1 หลักสูตร */}
+          <Controller
+            name="program"
+            control={form.control}
+            render={({ field, fieldState }) => (
+              <Field data-invalid={fieldState.invalid}>
+                <FieldLabel htmlFor="program">ชื่อหลักสูตร</FieldLabel>
+                <Select
+                  value={field.value ?? ""}
+                  onValueChange={(v) => field.onChange(v || undefined)}
+                >
+                  <SelectTrigger
+                    id="program"
+                    className="w-full"
+                    onBlur={field.onBlur}
+                    aria-invalid={fieldState.invalid}
+                  >
+                    <SelectValue placeholder="เลือกหลักสูตร" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {PROGRAMS.map((p) => (
+                      <SelectItem key={p.value} value={p.value}>
+                        {p.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {fieldState.invalid && (
+                  <FieldError errors={[fieldState.error]} />
+                )}
+              </Field>
+            )}
+          />
+
+          {/* 3.2 ภาคการศึกษา */}
+          <Controller
+            name="semester"
+            control={form.control}
+            render={({ field, fieldState }) => (
+              <Field data-invalid={fieldState.invalid}>
+                <FieldLabel>ภาคการศึกษา</FieldLabel>
+                <RadioGroup
+                  value={field.value ?? ""}
+                  onValueChange={field.onChange}
+                  onBlur={field.onBlur}
+                  className="flex flex-wrap gap-4"
+                >
+                  {SEMESTERS.map((s) => (
+                    <div key={s.value} className="flex items-center gap-2">
+                      <RadioGroupItem
+                        id={`semester-${s.value}`}
+                        value={s.value}
+                        aria-invalid={fieldState.invalid}
+                      />
+                      <Label htmlFor={`semester-${s.value}`}>{s.label}</Label>
+                    </div>
+                  ))}
+                </RadioGroup>
+                {fieldState.invalid && (
+                  <FieldError errors={[fieldState.error]} />
+                )}
+              </Field>
+            )}
+          />
+
+          {/* 3.3 รายละเอียด */}
+          <Controller
+            name="description"
+            control={form.control}
+            render={({ field, fieldState }) => (
+              <Field data-invalid={fieldState.invalid}>
+                <FieldLabel htmlFor="description">
+                  รายละเอียด (ไม่บังคับ)
+                </FieldLabel>
+                <Textarea
+                  {...field}
+                  id="description"
+                  aria-invalid={fieldState.invalid}
+                />
+                <p
+                  className={
+                    descriptionLength > MAX_DESCRIPTION
+                      ? "text-sm text-destructive"
+                      : "text-sm text-muted-foreground"
+                  }
+                >
+                  {descriptionLength}/{MAX_DESCRIPTION} ตัวอักษร
+                </p>
+                {fieldState.invalid && (
+                  <FieldError errors={[fieldState.error]} />
+                )}
+              </Field>
+            )}
+          />
+
+          {/* 3.4 รับข่าวสารทางอีเมล */}
+          <Controller
+            name="notifyByEmail"
+            control={form.control}
+            render={({ field }) => (
+              <Field orientation="horizontal">
+                <FieldContent>
+                  <FieldLabel htmlFor="notifyByEmail">
+                    รับข่าวสารทางอีเมล
+                  </FieldLabel>
+                  <FieldDescription>
+                    แจ้งเตือนผู้สอนเมื่อเปิดลงทะเบียน
+                  </FieldDescription>
+                </FieldContent>
+                <Switch
+                  id="notifyByEmail"
+                  checked={field.value}
+                  onCheckedChange={field.onChange}
+                />
+              </Field>
+            )}
+          />
 
           <DialogFooter>
+            <Button type="button" variant="outline" onClick={resetForm}>
+              <RotateCcw className="h-4 w-4" />
+              ล้างฟอร์ม
+            </Button>
             <Button type="submit">บันทึก</Button>
           </DialogFooter>
         </form>
